@@ -70,15 +70,19 @@ def generate_random_due_time(reference_time: datetime | None = None, rng: Random
 
 
 def generate_random_medication_orders(
-    count: int = 10, *, seed: int | None = None, reference_time: datetime | None = None
+    count: int = 10,
+    *,
+    seed: int | None = None,
+    reference_time: datetime | None = None,
+    reserved_order_ids: set[str] | None = None,
 ) -> list[MedicationOrder]:
-    """Generate reproducible model-valid orders for pytest fixtures and demos."""
+    """Generate model-valid orders with IDs unique from reserved IDs."""
     if not 0 <= count <= 90_000:
         raise ValueError("count must be between 0 and 90,000")
 
     randomizer = Random(seed)
     orders: list[MedicationOrder] = []
-    used_order_ids: set[str] = set()
+    used_order_ids: set[str] = set(reserved_order_ids or set())
     while len(orders) < count:
         order_id = generate_random_order_id(randomizer)
         if order_id in used_order_ids:
@@ -108,9 +112,12 @@ def generate_medication_orders() -> list[MedicationOrder]:
         due_time=datetime(2026, 8, 2, 10, 30),
         status="Routine",
         room=7012,
-        unit="SICU",
+        unit="7",
     )
-    transferred_order.update_location(room=8012, unit="MICU")
+    # The patient's current unit follows the room-prefix map, while the
+    # physical medication remains in its original Bin 7 until transfer
+    # reconciliation immediately before tubing.
+    transferred_order.update_location(room=8012, unit="ED")
 
     return [
         MedicationOrder(
@@ -120,7 +127,7 @@ def generate_medication_orders() -> list[MedicationOrder]:
             due_time=datetime(2026, 8, 2, 10, 0),
             status="Routine",
             room=8012,
-            unit="MICU",
+            unit="ED",
         ),
         MedicationOrder(
             order_id="STAT-7",
@@ -129,7 +136,7 @@ def generate_medication_orders() -> list[MedicationOrder]:
             due_time=datetime(2026, 8, 2, 9, 45),
             status="STAT",
             room=7015,
-            unit="SICU",
+            unit="7",
         ),
         MedicationOrder(
             order_id="ROUTINE-PO-6",
@@ -138,7 +145,7 @@ def generate_medication_orders() -> list[MedicationOrder]:
             due_time=datetime(2026, 8, 2, 10, 30),
             status="Routine",
             room=6015,
-            unit="CVICU",
+            unit="6",
         ),
         transferred_order,
     ]
@@ -161,9 +168,20 @@ def _has_valid_bin_placement(order: MedicationOrder) -> bool:
         return False
 
     expected_bin = ROOM_PREFIX_BIN_MAP.get(str(order.room)[0])
-    if expected_bin is None or order.current_bin != expected_bin:
+    if expected_bin is None or str(order.unit).upper() != str(expected_bin).upper():
         return False
-    return str(order.unit).upper() == str(expected_bin).upper()
+
+    if order.current_bin == expected_bin:
+        return True
+
+    # A transfer is deliberately not applied continuously.  It is valid for
+    # an order to have a current room in a new mapped unit while physically
+    # remaining in the bin associated with its previous room until the
+    # engine's final transfer reconciliation.
+    previous_location = order.previous_location
+    previous_room = previous_location.room if previous_location is not None else None
+    previous_bin = ROOM_PREFIX_BIN_MAP.get(str(previous_room)[0]) if previous_room is not None else None
+    return previous_bin is not None and order.current_bin == previous_bin
 
 
 def generate_bins(orders: Iterable[MedicationOrder] | None = None) -> list[Bin]:
@@ -173,17 +191,22 @@ def generate_bins(orders: Iterable[MedicationOrder] | None = None) -> list[Bin]:
     rules then move it to the bin associated with its current location.
     """
     bins = [Bin(bin_number) for bin_number in TUBING_BIN_LOCATIONS]
+    place_orders_in_bins(orders or [], bins)
+    return bins
+
+
+def place_orders_in_bins(orders: Iterable[MedicationOrder], bins: list[Bin]) -> None:
+    """Append orders to their configured physical bins without replacing state."""
     bins_by_number = {bin_obj.bin_number: bin_obj for bin_obj in bins}
 
-    for order in orders or []:
+    for order in orders:
         if order.status.upper() in {"TUBED", "COMPLETED", "DONE"}:
             continue
         bin_number = order.current_bin
-        destination_bin = (
-            bins_by_number[bin_number]
-            if _has_valid_bin_placement(order) and bin_number in bins_by_number
-            else bins_by_number[UNKNOWN_BIN]
-        )
+        destination_number = bin_number if _has_valid_bin_placement(order) else UNKNOWN_BIN
+        destination_bin = bins_by_number.get(destination_number)
+        if destination_bin is None:
+            destination_bin = Bin(destination_number)
+            bins.append(destination_bin)
+            bins_by_number[destination_number] = destination_bin
         destination_bin.add_medication(order)
-
-    return bins

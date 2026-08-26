@@ -47,6 +47,10 @@ class MedicationService:
         """Return medication orders that are not already tubed or completed."""
         return [order for order in self.orders if order.status.upper() not in {"TUBED", "COMPLETED", "DONE"}]
 
+    def get_tubed_medications(self) -> list[MedicationOrder]:
+        """Return orders confirmed as tubed by the backend."""
+        return [order for order in self.orders if order.tubed or order.status.upper() == "TUBED"]
+
     def get_medication_route(self, order: MedicationOrder) -> str:
         """Return the medication route such as IV, PO, or SubQ."""
         return order.route.upper()

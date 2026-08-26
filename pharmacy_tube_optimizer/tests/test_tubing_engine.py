@@ -71,7 +71,7 @@ def test_routine_selection():
     assert iv_order in to_send
 
 
-def test_transferred_order_moves_to_destination_bin():
+def test_transferred_order_is_projected_to_destination_bin_without_mutation():
     engine = TubingEngine()
     source_bin = Bin(8)
     destination_bin = Bin(7)
@@ -92,9 +92,10 @@ def test_transferred_order_moves_to_destination_bin():
     results = engine.evaluate_all_bins([source_bin, destination_bin], datetime(2026, 8, 2, 10, 0))
 
     assert 8 not in results
-    assert order in destination_bin.get_pending_medications()
-    assert order.location is not None
-    assert order.location.bin_number == destination_bin.bin_number
+    assert order in results[7]
+    assert order in source_bin.get_pending_medications()
+    assert order not in destination_bin.get_pending_medications()
+    assert order.current_bin == 8
 
 
 def test_tube_ready_bins_are_ranked_by_bin_priority_score():
@@ -146,7 +147,7 @@ def test_only_bins_with_a_closest_due_time_within_one_hour_are_reviewed():
     assert 2 not in recommendations
 
 
-def test_overdue_closest_medication_is_updated_to_the_evaluation_time():
+def test_overdue_closest_medication_does_not_change_during_evaluation():
     engine = TubingEngine()
     bin_obj = Bin(1)
     overdue_order = MedicationOrder(
@@ -156,10 +157,10 @@ def test_overdue_closest_medication_is_updated_to_the_evaluation_time():
 
     engine.evaluate_all_bins([bin_obj], datetime(2026, 8, 2, 10, 0))
 
-    assert overdue_order.due_time == datetime(2026, 8, 2, 10, 0)
+    assert overdue_order.due_time == datetime(2026, 8, 2, 9, 0)
 
 
-def test_missing_transfer_destination_bin_is_created():
+def test_missing_transfer_destination_bin_is_projected_without_creating_a_physical_bin():
     engine = TubingEngine()
     source_bin = Bin(8)
     order = MedicationOrder("TR-MISSING", "Heparin", "IV", datetime(2026, 8, 2, 10), "Routine", 8012, "MICU")
@@ -170,6 +171,5 @@ def test_missing_transfer_destination_bin_is_created():
 
     engine.evaluate_all_bins(bins, datetime(2026, 8, 2, 10))
 
-    destination_bin = next(bin_obj for bin_obj in bins if bin_obj.bin_number == 7)
-    assert order in destination_bin.get_pending_medications()
-    assert order.current_bin == 7
+    assert all(bin_obj.bin_number != 7 for bin_obj in bins)
+    assert order.current_bin == 8

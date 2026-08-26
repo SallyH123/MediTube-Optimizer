@@ -14,10 +14,8 @@ if __package__ in {None, ""}:
 from pharmacy_tube_optimizer.data.mock_data_generator import generate_random_mock_dataset
 from pharmacy_tube_optimizer.data.transfer_data import generate_random_patient_transfer
 from pharmacy_tube_optimizer.models.medication_order import MedicationOrder
-from pharmacy_tube_optimizer.rules.priority_rules import get_medication_priority
 from pharmacy_tube_optimizer.rules.transfer_rules import check_transfer_before_tubing
-from pharmacy_tube_optimizer.services.medication_service import MedicationService
-from pharmacy_tube_optimizer.services.tubing_engine import TubingEngine
+from pharmacy_tube_optimizer.services.tubing_engine import TubingEngine, TubingEvaluation
 from pharmacy_tube_optimizer.utils.logger import Logger
 
 
@@ -25,13 +23,16 @@ def _due_time_text(order: MedicationOrder) -> str:
     return order.due_time.strftime("%Y-%m-%d %H:%M") if order.due_time else "No due time"
 
 
-def display_tubing_board(recommendations: dict[int | str, list[MedicationOrder]]) -> None:
-    """Print the final tubing candidates grouped by their bin."""
+def display_tubing_board(evaluation: TubingEvaluation) -> None:
+    """Print the read-only, priority-sorted tubing recommendation."""
     print("\nTubing Board")
     print("=" * 12)
-    for bin_number, orders in recommendations.items():
+    if not evaluation.ready_bins:
+        print("No bins are currently ready to tube.")
+        return
+    for bin_number, orders in evaluation.ready_bins.items():
         medications = ", ".join(f"{order.medication} ({order.order_id})" for order in orders)
-        print(f"Bin {bin_number}: {medications}")
+        print(f"Bin {bin_number} | priority {evaluation.priority_scores[bin_number]}: {medications}")
 
 
 def display_generated_data(orders: list[MedicationOrder], bins: list, heading: str = "Generated") -> None:
@@ -59,21 +60,6 @@ def display_generated_data(orders: list[MedicationOrder], bins: list, heading: s
             )
 
 
-def display_tubed_orders(orders: list[MedicationOrder], priority_scores: dict[str, int]) -> None:
-    """Print the orders that were sent during this tubing run."""
-    print("\nTubed Orders")
-    print("=" * 12)
-    if not orders:
-        print("No orders were eligible for tubing.")
-        return
-    for order in orders:
-        print(
-            f"order ID {order.order_id} | med {order.medication} | route {order.route} | "
-            f"due {_due_time_text(order)} | room {order.room} | bin {order.current_bin} | "
-            f"priority score {priority_scores[order.order_id]}"
-        )
-
-
 def run_application(
     current_time: datetime | None = None, *, display: bool = True, seed: int | None = None, order_count: int = 10
 ) -> dict[str, Any]:
@@ -96,19 +82,12 @@ def run_application(
     logger.log_patient_transfer(transfer["original_room"], transfer["current_room"])
     logger.log_destination_update(transfer["original_bin"], destination_bin)
 
-    # Move the selected medication immediately so the post-transfer bin view
-    # always reflects the new location, even when its dose is not due soon.
-    source_bin_number = transferred_order.current_bin
-    source_bin = next(bin_obj for bin_obj in bins if bin_obj.bin_number == source_bin_number)
-    destination_queue = next(bin_obj for bin_obj in bins if bin_obj.bin_number == destination_bin)
-    source_bin.remove_medication(transferred_order.order_id)
-    destination_queue.add_medication(transferred_order)
-
     engine = TubingEngine()
     for bin_obj in bins:
         logger.log_bin_evaluation(bin_obj.bin_number)
-    recommendations = engine.evaluate_all_bins(bins, evaluation_time)
-    for candidate_orders in recommendations.values():
+    evaluation = engine.evaluate(bins, evaluation_time)
+    recommendations = {bin_number: list(orders) for bin_number, orders in evaluation.ready_bins.items()}
+    for candidate_orders in evaluation.ready_bins.values():
         for order in candidate_orders:
             logger.log_medication_eligibility(order.medication, True)
 
@@ -118,32 +97,18 @@ def run_application(
             f"room {original_room} -> {destination_room} | bin {transfer['original_bin']} -> {destination_bin}"
         )
         display_generated_data(orders, bins, heading="Generated After Transfer (Not Tubed)")
-        display_tubing_board(recommendations)
-
-    # Tube the orders recommended by the engine, then display the physical
-    # bins after those medications have been removed.
-    bins_by_number = {bin_obj.bin_number: bin_obj for bin_obj in bins}
-    medication_service = MedicationService(orders, logger)
-    tubed_orders: list[MedicationOrder] = []
-    tubed_order_priority_scores: dict[str, int] = {}
-    for bin_number, candidate_orders in recommendations.items():
-        bin_obj = bins_by_number[bin_number]
-        for order in candidate_orders:
-            tubed_order_priority_scores[order.order_id] = get_medication_priority(order.status, order.route)
-            tubed_orders.append(medication_service.tube_medication(order, bin_obj))
-
-    if display:
-        display_tubed_orders(tubed_orders, tubed_order_priority_scores)
-        display_generated_data(orders, bins, heading="Generated After Transfer and Tubed")
+        display_tubing_board(evaluation)
+        print("\nRecommendation complete. Awaiting an explicit tubing request.")
 
     return {
         "database": database,
         "orders": orders,
         "patient_locations": {transferred_order.order_id: str(destination_room)},
         "transfers": [transfer],
+        "evaluation": evaluation,
         "recommendations": recommendations,
-        "tubed_orders": tubed_orders,
-        "tubed_order_priority_scores": tubed_order_priority_scores,
+        "tubed_orders": [],
+        "tubed_order_priority_scores": {},
         "logs": logger.get_logs(),
     }
 

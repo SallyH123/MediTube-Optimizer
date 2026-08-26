@@ -1,0 +1,67 @@
+:root {
+  color: #102a43;
+  background: #edf3f7;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button { font: inherit; }
+
+.app-shell { max-width: 1500px; margin: 0 auto; padding: 40px 28px 64px; }
+.page-header { display: flex; justify-content: space-between; gap: 24px; align-items: end; margin-bottom: 28px; }
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 8px; font-size: clamp(2rem, 4vw, 3.25rem); letter-spacing: -0.045em; }
+h2 { margin-bottom: 0; font-size: 1.15rem; }
+.eyebrow { margin-bottom: 6px; color: #3d6b78; font-size: .72rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.subtitle { margin: 0; color: #526d82; }
+.refresh-button, .tube-button { border: 0; border-radius: 9px; font-weight: 800; cursor: pointer; }
+.refresh-button { padding: 11px 15px; background: #102a43; color: #fff; }
+.refresh-button:disabled { opacity: .65; cursor: wait; }
+
+.transfer-notifications { display: grid; grid-template-columns: 235px 1fr; gap: 24px; margin: 0 0 28px; padding: 20px 24px; border-left: 5px solid #d17a22; border-radius: 10px; background: #fff6e8; }
+.transfer-notifications h2 { font-size: 1rem; }
+.transfer-notifications ul { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.transfer-notifications li { color: #3e4850; }
+.transfer-notifications li p { margin: 3px 0 0; }
+
+.bin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.bin-card { display: flex; flex-direction: column; min-height: 350px; overflow: hidden; border: 1px solid #cddbe4; border-radius: 13px; background: #fff; box-shadow: 0 2px 5px rgb(16 42 67 / 5%); }
+.bin-card.is-ready { border: 2px solid hsl(4 86% calc(82% - var(--priority-strength) * 35%)); background: hsl(4 100% calc(97% - var(--priority-strength) * 43%)); box-shadow: 0 7px 22px hsl(4 86% 42% / calc(.1 + var(--priority-strength) * .22)); }
+.bin-card.is-ready .bin-metrics { background: hsl(4 100% calc(96% - var(--priority-strength) * 38%)); }
+.bin-card.is-ready .medication-row { background: rgb(255 255 255 / 78%); }
+.bin-header { display: flex; align-items: start; justify-content: space-between; gap: 10px; padding: 19px 19px 14px; border-bottom: 1px solid #e5edf2; }
+.tubing-state { padding: 5px 8px; border-radius: 999px; background: #eaf0f4; color: #526d82; font-size: .71rem; font-weight: 800; white-space: nowrap; }
+.tubing-state.ready { background: #fee2d2; color: #9d3512; }
+.bin-metrics { display: grid; grid-template-columns: 1fr 1fr; padding: 13px 19px; background: #f7fafc; }
+.bin-metrics div + div { padding-left: 14px; border-left: 1px solid #dce7ed; }
+.bin-metrics span, dt { display: block; color: #688092; font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.bin-metrics strong { display: block; margin-top: 3px; font-size: 1.2rem; }
+.medication-list { display: grid; gap: 10px; flex: 1; margin: 0; padding: 14px 19px; list-style: none; }
+.medication-row { padding: 12px; border-radius: 8px; background: #f4f8fa; }
+.medication-row.needs-tubing { border-left: 4px solid #c2410c; }
+.medication-heading { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.medication-heading strong { font-size: .9rem; }
+.tube-now-label { display: inline-block; margin-left: 8px; color: #9d3512; font-size: .7rem !important; font-weight: 900; letter-spacing: .08em; }
+.status { padding: 3px 6px; border-radius: 4px; background: #dce9ee; color: #315464; font-size: .67rem; font-weight: 800; }
+.status.stat { background: #ffe0d5; color: #a52c12; }
+dl { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 12px; margin: 11px 0 0; }
+dd { margin: 2px 0 0; font-size: .78rem; }
+.empty-state { flex: 1; padding: 20px; color: #688092; }
+.tube-button { width: calc(100% - 38px); margin: 14px 19px 19px; padding: 11px; background: #d35522; color: #fff; letter-spacing: .08em; }
+.tube-button:disabled { background: #d9e2e8; color: #708593; cursor: not-allowed; }
+.unknown-section { margin-top: 34px; padding-top: 26px; border-top: 1px solid #ccd9e1; }
+.unknown-section > div:first-child { margin-bottom: 14px; }
+.unknown-section .bin-card { max-width: 480px; }
+.tubed-section { margin-top: 34px; padding-top: 26px; border-top: 1px solid #ccd9e1; }
+.tubed-medication-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(275px, 1fr)); gap: 16px; margin: 16px 0 0; padding: 0; list-style: none; }
+.tubed-medication-list li { padding: 18px; border: 1px solid #b7d6c4; border-radius: 10px; background: #f2fbf5; }
+.error-message { margin: 0 0 22px; padding: 12px 16px; border-radius: 8px; background: #ffe5e3; color: #a7261a; font-weight: 700; }
+.loading { padding: 60px 0; color: #526d82; font-size: 1.1rem; }
+
+@media (max-width: 620px) {
+  .app-shell { padding: 28px 16px 48px; }
+  .page-header, .transfer-notifications { display: block; }
+  .refresh-button { margin-top: 16px; }
+  .transfer-notifications { padding: 18px; }
+}

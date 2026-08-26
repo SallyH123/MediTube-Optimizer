@@ -9,6 +9,7 @@ from pharmacy_tube_optimizer.data.medication_data import (
     generate_bins,
     generate_medication_orders,
     generate_random_medication_orders,
+    place_orders_in_bins,
 )
 from pharmacy_tube_optimizer.data.transfer_data import (
     generate_patient_location_data,
@@ -23,6 +24,7 @@ __all__ = [
     "generate_medication_orders",
     "generate_mock_dataset",
     "generate_random_medication_orders",
+    "place_orders_in_bins",
     "generate_random_mock_dataset",
     "generate_patient_location_data",
     "generate_patient_transfers",

@@ -45,6 +45,7 @@ class MedicationOrder:
     current_bin: int | str | None = None
     tubed: bool = False
     active: bool = True
+    pre_tubing_status: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Validate the incoming order and ensure a `location` exists when possible.
@@ -124,6 +125,8 @@ class MedicationOrder:
 
     def mark_tubed(self) -> None:
         """Mark this active order as having been tubed."""
+        if self.pre_tubing_status is None:
+            self.pre_tubing_status = self.status
         self.status = "TUBED"
         self.tubed = True
 
@@ -145,6 +148,8 @@ class MedicationOrder:
             "medication_name": self.medication_name,
             "route": self.route,
             "status": self.status,
+            "clinical_status": self.pre_tubing_status or self.status,
+            "tubing_status": "TUBED" if self.tubed else "PENDING",
             "due_time": self.due_time.isoformat() if self.due_time else None,
             "room": self.room,
             "unit": self.unit,

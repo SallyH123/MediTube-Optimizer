@@ -25,7 +25,7 @@ This module does NOT:
 from __future__ import annotations
 
 from pharmacy_tube_optimizer.models.medication_order import MedicationOrder
-from pharmacy_tube_optimizer.config import ROOM_PREFIX_BIN_MAP
+from pharmacy_tube_optimizer.config import ROOM_PREFIX_BIN_MAP, UNKNOWN_BIN
 
 
 def normalize_room(room: str) -> str:
@@ -46,9 +46,10 @@ def get_unit_from_room(room: str) -> str:
         return "ED"
     if room == "PERIOP":
         return "PERIOP"
-    if room[0] not in ROOM_PREFIX_BIN_MAP:
-        raise ValueError(f"Unsupported room prefix: {room[0]}")
-    return str(ROOM_PREFIX_BIN_MAP[room[0]])
+    # The board always has a separate UNKNOWN bin.  A location which does not
+    # map safely to a configured clinical destination must be held there,
+    # rather than aborting the final transfer check or guessing a standard bin.
+    return str(ROOM_PREFIX_BIN_MAP.get(room[0], UNKNOWN_BIN))
 
 
 def get_bin_from_room(room: str) -> str:

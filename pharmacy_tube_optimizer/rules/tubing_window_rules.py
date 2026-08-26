@@ -73,19 +73,16 @@ def get_closest_medication_due_time(
 ) -> datetime | None:
     """Return a bin's earliest scheduled due time.
 
-    Overdue medications are updated to ``current_time`` before the comparison,
+    Overdue medications are treated as due at ``current_time`` for comparison,
     so an overdue dose makes its bin immediately eligible for bin-level review.
+    The order itself is not changed.
     Orders without a due time do not determine when a bin is reviewed.
     """
     due_orders = [order for order in medications if order.due_time is not None]
     if not due_orders:
         return None
 
-    for order in due_orders:
-        if order.due_time < current_time:
-            order.due_time = current_time
-
-    return min(order.due_time for order in due_orders)
+    return min(max(order.due_time, current_time) for order in due_orders)
 
 
 def is_closest_medication_within_tubing_window(

@@ -1,15 +1,17 @@
-"""Evaluate and rank physical tubing bins.
+"""Evaluate and explicitly execute physical tubing work.
 
-The engine reviews only bins whose closest pending medication is due within
-one hour (including overdue medications). It reconciles patient transfers,
-filters each qualifying bin by cutoff and medication-window rules, and ranks
-the bins that are ready to tube.
+Evaluation is a read-only projection of the current bins.  It may detect a
+patient transfer and place that order in its *projected* destination bin, but
+does not alter orders or physical bins.  Execution is a separate, explicit
+operation that performs the projected moves and marks selected orders tubed.
 """
 
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import dataclass, replace
 from datetime import datetime
+from typing import Iterable
 
 from pharmacy_tube_optimizer.models.bin import Bin
 from pharmacy_tube_optimizer.models.medication_order import MedicationOrder
@@ -24,212 +26,272 @@ from pharmacy_tube_optimizer.rules.tubing_window_rules import (
     is_closest_medication_within_tubing_window,
     is_within_tubing_window,
 )
+from pharmacy_tube_optimizer.services.medication_service import MedicationService
+
+
+@dataclass(frozen=True)
+class TubingEvaluation:
+    """Read-only tubing recommendation, ordered highest priority first."""
+
+    ready_bins: dict[int | str, tuple[MedicationOrder, ...]]
+    priority_scores: dict[int | str, float]
+    medication_priority_scores: dict[str, int]
+    detected_transfers: tuple[dict, ...]
+
+    @property
+    def sorted_bin_numbers(self) -> tuple[int | str, ...]:
+        """Return the technician's recommended tubing order."""
+        return tuple(self.ready_bins)
 
 
 class TubingEngine:
-    """Build a ranked list of bins that are currently ready for tubing."""
+    """Evaluate bins without mutation, then tube only on an explicit request."""
 
-    def evaluate_all_bins(
-        self, bins: list[Bin], current_time: datetime
-    ) -> dict[int | str, list[MedicationOrder]]:
-        """Return only tube-ready bins, in highest-priority-first order.
+    def evaluate(self, bins: list[Bin], current_time: datetime) -> TubingEvaluation:
+        """Build a transfer-aware, ranked recommendation without changing state.
 
-        The method does not process bins whose closest pending dose is more
-        than one hour away. A transfer destination is added to the review set
-        even if it did not independently meet the one-hour timing gate.
+        The one-hour closest-dose review gate and all existing medication
+        eligibility rules remain in force.  Transfers are reconciled only in
+        an in-memory projection, so callers can safely render this result and
+        wait for a technician/API request before executing it.
         """
-        # Index physical bins for quick transfer-destination lookups.
-        bins_by_number: dict[int | str, Bin] = {bin_obj.bin_number: bin_obj for bin_obj in bins}
-
-        # The one-hour closest-dose gate limits processing to bins that need
-        # attention now; bins with only later medications are not evaluated.
+        projected_bins = {
+            bin_obj.bin_number: list(bin_obj.get_pending_medications())
+            for bin_obj in bins
+        }
         qualified_bin_numbers = {
             bin_obj.bin_number
             for bin_obj in bins
             if self._is_bin_ready_for_review(bin_obj, current_time)
         }
 
-        # A transferred medication can make its destination bin relevant, so
-        # process qualified bins through a queue rather than one fixed pass.
         bins_to_reconcile = deque(qualified_bin_numbers)
         reconciled_bin_numbers: set[int | str] = set()
+        detected_transfers: list[dict] = []
         while bins_to_reconcile:
-            bin_number = bins_to_reconcile.popleft()
-            if bin_number in reconciled_bin_numbers:
+            source_number = bins_to_reconcile.popleft()
+            if source_number in reconciled_bin_numbers:
                 continue
-            reconciled_bin_numbers.add(bin_number)
-            bin_obj = bins_by_number[bin_number]
+            reconciled_bin_numbers.add(source_number)
 
-            # Reconcile all pending orders before medication eligibility so a
-            # medication is never evaluated for tubing at a stale location.
-            for order in list(bin_obj.get_pending_medications()):
-                transfer_details = get_transfer_details(order)
-                if transfer_details is None or not transfer_details["transferred"]:
+            for order in list(projected_bins.get(source_number, [])):
+                details = get_transfer_details(order)
+                if details is None or not details["transferred"]:
                     continue
-
-                destination_number = get_destination_bin_number(transfer_details)
+                destination_number = get_destination_bin_number(details)
+                # Once a previous transfer has been physically reconciled,
+                # it is not a new transfer event for this evaluation.
+                if destination_number == source_number:
+                    continue
+                detected_transfers.append(
+                    {
+                        "order_number": order.order_id,
+                        "medication_name": order.medication,
+                        "old_room": details["original_room"],
+                        "new_room": details["current_room"],
+                        "old_bin": str(source_number),
+                        "new_bin": str(destination_number) if destination_number is not None else None,
+                    }
+                )
+                projected_bins[source_number].remove(order)
                 if destination_number is None:
-                    # Do not tube to the stale source bin when transfer data
-                    # cannot identify a valid destination.
-                    bin_obj.remove_medication(order.order_id)
+                    # A transfer with no safe destination is withheld from
+                    # this evaluation, as it was in the prior workflow.
                     continue
 
-                destination_bin = self._get_or_create_bin(destination_number, bins, bins_by_number)
-                if destination_bin is bin_obj:
-                    # The physical medication is already in its correct bin.
-                    continue
-
-                # Remove from the source before adding to the destination to
-                # ensure one physical medication belongs to only one bin.
-                bin_obj.remove_medication(order.order_id)
-                destination_bin.add_medication(order)
-                if destination_bin.bin_number not in qualified_bin_numbers:
-                    # Destination bins are evaluated even if their closest
-                    # pre-transfer medication was more than one hour away.
-                    qualified_bin_numbers.add(destination_bin.bin_number)
-                    bins_to_reconcile.append(destination_bin.bin_number)
+                destination_orders = projected_bins.setdefault(destination_number, [])
+                if order not in destination_orders:
+                    destination_orders.append(order)
+                # A transfer can make a previously non-qualified destination
+                # relevant, so its projected contents must also be evaluated.
+                if destination_number not in qualified_bin_numbers:
+                    qualified_bin_numbers.add(destination_number)
+                    bins_to_reconcile.append(destination_number)
 
         ranked_candidates: list[dict] = []
-        for bin_obj in bins:
-            if bin_obj.bin_number not in qualified_bin_numbers:
-                continue
-
-            # Only medications passing both individual cutoff and window rules
-            # are included in the final tubing candidate list.
-            final_orders = self._eligible_orders(bin_obj, current_time)
+        for bin_number in qualified_bin_numbers:
+            final_orders = self._eligible_orders(projected_bins.get(bin_number, []), current_time)
             if not final_orders:
                 continue
-
-            # Priority rules operate on small status/route dictionaries rather
-            # than on the full medication-order model.
             medication_data = [self._priority_payload(order) for order in final_orders]
             ranked_candidates.append(
                 {
-                    "bin_number": bin_obj.bin_number,
+                    "bin_number": bin_number,
                     "medications": medication_data,
                     "orders": final_orders,
                     "priority_score": calculate_bin_priority_score(medication_data),
                 }
             )
 
-        # Apply the shared bin-priority rule to set the technician's tubing order.
         ranked_candidates = rank_bins_for_tubing(ranked_candidates)
-        return {candidate["bin_number"]: candidate["orders"] for candidate in ranked_candidates}
+        return TubingEvaluation(
+            ready_bins={candidate["bin_number"]: tuple(candidate["orders"]) for candidate in ranked_candidates},
+            priority_scores={candidate["bin_number"]: candidate["priority_score"] for candidate in ranked_candidates},
+            medication_priority_scores={
+                order.order_id: self._priority_score(order)
+                for orders in projected_bins.values()
+                for order in orders
+            },
+            detected_transfers=tuple(detected_transfers),
+        )
+
+    def prepare_tubing(self, bins: list[Bin], current_time: datetime) -> TubingEvaluation:
+        """Reconcile transfers, then return a fresh final evaluation.
+
+        This is the explicit state-changing preparation operation used by an
+        application/API immediately before displaying or executing tubing.
+        The public :meth:`evaluate` method remains read-only.
+        """
+        projected_evaluation = self.evaluate(bins, current_time)
+        if not projected_evaluation.detected_transfers:
+            return projected_evaluation
+
+        self.apply_detected_transfers(bins, projected_evaluation.detected_transfers)
+        final_evaluation = self.evaluate(bins, current_time)
+        return replace(final_evaluation, detected_transfers=projected_evaluation.detected_transfers)
+
+    def apply_detected_transfers(self, bins: list[Bin], transfers: Iterable[dict]) -> None:
+        """Apply transfer results previously detected by :meth:`evaluate`.
+
+        This method contains the physical bin movement; callers do not need
+        to implement destination or transfer rules themselves.
+        """
+        bins_by_number = {bin_obj.bin_number: bin_obj for bin_obj in bins}
+        for transfer in transfers:
+            destination_value = transfer.get("new_bin")
+            if destination_value is None:
+                continue
+            destination_number: int | str = int(destination_value) if str(destination_value).isdigit() else str(destination_value)
+            order_number = transfer["order_number"]
+            source_bin = next(
+                (bin_obj for bin_obj in bins if any(order.order_id == order_number for order in bin_obj.get_pending_medications())),
+                None,
+            )
+            if source_bin is None:
+                continue
+            destination_bin = self._get_or_create_bin(destination_number, bins, bins_by_number)
+            if source_bin is destination_bin:
+                continue
+            order = next(order for order in source_bin.get_pending_medications() if order.order_id == order_number)
+            source_bin.remove_medication(order_number)
+            destination_bin.add_medication(order)
+
+    def evaluate_all_bins(
+        self, bins: list[Bin], current_time: datetime
+    ) -> dict[int | str, list[MedicationOrder]]:
+        """Compatibility wrapper returning ordered ready bins as lists.
+
+        New callers should use :meth:`evaluate` to also receive scores and
+        detected transfers.  Both methods are read-only.
+        """
+        return {bin_number: list(orders) for bin_number, orders in self.evaluate(bins, current_time).ready_bins.items()}
+
+    def execute_tubing(
+        self,
+        evaluation: TubingEvaluation,
+        bins: list[Bin],
+        medication_service: MedicationService,
+        selected_bins: Iterable[int | str] | None = None,
+    ) -> list[MedicationOrder]:
+        """Tube evaluated orders only after an explicit application/API request.
+
+        ``selected_bins`` may restrict execution to a technician-selected
+        subset; omitted means execute the full, already-ranked evaluation.
+        """
+        requested_bins = set(selected_bins) if selected_bins is not None else set(evaluation.ready_bins)
+        bins_by_number = {bin_obj.bin_number: bin_obj for bin_obj in bins}
+        tubed_orders: list[MedicationOrder] = []
+        for destination_number, orders in evaluation.ready_bins.items():
+            if destination_number not in requested_bins:
+                continue
+            destination_bin = self._get_or_create_bin(destination_number, bins, bins_by_number)
+            for order in orders:
+                source_bin = self._find_pending_order_bin(order, bins)
+                if source_bin is None:
+                    continue
+                if source_bin is not destination_bin:
+                    source_bin.remove_medication(order.order_id)
+                    destination_bin.add_medication(order)
+                tubed_orders.append(medication_service.tube_medication(order, destination_bin))
+        return tubed_orders
+
+    def execute_manual_tubing(
+        self,
+        bin_number: int | str,
+        bins: list[Bin],
+        medication_service: MedicationService,
+    ) -> list[MedicationOrder]:
+        """Tube every pending order in one bin after an approved override.
+
+        Transfer reconciliation remains the caller's responsibility and is
+        deliberately performed before this method.  This operation bypasses
+        only the normal eligibility selection for a technician-approved bin.
+        """
+        bin_obj = next((candidate for candidate in bins if candidate.bin_number == bin_number), None)
+        if bin_obj is None:
+            return []
+        return [
+            medication_service.tube_medication(order, bin_obj)
+            for order in list(bin_obj.get_pending_medications())
+        ]
 
     def evaluate_bin(
         self, bin_obj: Bin, current_time: datetime, all_bins: list[Bin] | None = None
     ) -> list[MedicationOrder]:
-        """Evaluate one bin using the same one-hour timing gate and eligibility rules.
-
-        If a transferred medication has a destination missing from ``all_bins``,
-        a new physical bin is created and appended to that list.
-        """
-        if not self._is_bin_ready_for_review(bin_obj, current_time):
-            # Do not perform transfer or eligibility work for later bins.
-            return []
-
-        # ``all_bins`` lets a direct caller retain newly created transfer bins.
-        bins = all_bins if all_bins is not None else [bin_obj]
-        bins_by_number = {candidate.bin_number: candidate for candidate in bins}
-        self._reconcile_bin_transfers(bin_obj, bins, bins_by_number)
-        return self._eligible_orders(bin_obj, current_time)
+        """Return one bin's read-only projected eligibility result."""
+        evaluation = self.evaluate(all_bins if all_bins is not None else [bin_obj], current_time)
+        return list(evaluation.ready_bins.get(bin_obj.bin_number, ()))
 
     def should_tube_medication(self, order: MedicationOrder, current_time: datetime) -> bool:
-        """Return whether one medication passes cutoff and tubing-window rules.
-
-        The due-time cutoff applies to every route, including IV and STAT.
-        When the cutoff is released, the normal unit-specific tubing-window
-        rule determines whether the medication can be sent.
-        """
+        """Return whether one medication passes cutoff and timing-window rules."""
         if order.due_time is not None and not is_cutoff_released(current_time, order.due_time):
-            # A held medication does not proceed to the normal tubing window.
             return False
         return self.is_within_tubing_window(order, current_time)
 
     def is_within_tubing_window(self, order: MedicationOrder, current_time: datetime) -> bool:
-        """Return whether an order is within its unit-specific tubing window."""
         if order.due_time is None:
-            # An unscheduled order has no timing-window restriction.
             return True
         unit = self._get_order_unit(order)
-        if not unit:
-            # Without unit data, use the safe legacy behavior of permitting
-            # window evaluation to continue rather than failing the order.
-            return True
-        return is_within_tubing_window(current_time, order.due_time, unit)
+        return not unit or is_within_tubing_window(current_time, order.due_time, unit)
 
     def select_medications_to_send(self, bin_obj: Bin) -> list[MedicationOrder]:
-        """Return the pending medications in one bin, ordered by priority only."""
+        """Return pending medications ordered by priority only."""
         return self._sort_by_priority(list(bin_obj.get_pending_medications()))
 
-    def _eligible_orders(self, bin_obj: Bin, current_time: datetime) -> list[MedicationOrder]:
-        """Return this bin's medications that pass individual eligibility checks."""
-        # Preserve medication ordering within a qualified bin for board display.
-        return self._sort_by_priority(
-            [
-                order
-                for order in bin_obj.get_pending_medications()
-                if self.should_tube_medication(order, current_time)
-            ]
-        )
+    def _eligible_orders(self, orders: list[MedicationOrder], current_time: datetime) -> list[MedicationOrder]:
+        return self._sort_by_priority([order for order in orders if self.should_tube_medication(order, current_time)])
 
-    def _is_bin_ready_for_review(self, bin_obj: Bin, current_time: datetime) -> bool:
-        """Return whether the bin's closest pending dose is within one hour."""
-        return is_closest_medication_within_tubing_window(
-            list(bin_obj.get_pending_medications()), current_time
-        )
-
-    def _reconcile_bin_transfers(
-        self, source_bin: Bin, bins: list[Bin], bins_by_number: dict[int | str, Bin]
-    ) -> None:
-        """Move transfers out of one bin, creating missing destination bins."""
-        for order in list(source_bin.get_pending_medications()):
-            transfer_details = get_transfer_details(order)
-            if transfer_details is None or not transfer_details["transferred"]:
-                continue
-            destination_number = get_destination_bin_number(transfer_details)
-            if destination_number is None:
-                # A confirmed transfer without a destination is removed from
-                # the stale source bin and withheld from tubing.
-                source_bin.remove_medication(order.order_id)
-                continue
-            destination_bin = self._get_or_create_bin(destination_number, bins, bins_by_number)
-            if destination_bin is source_bin:
-                continue
-            source_bin.remove_medication(order.order_id)
-            destination_bin.add_medication(order)
+    @staticmethod
+    def _is_bin_ready_for_review(bin_obj: Bin, current_time: datetime) -> bool:
+        return is_closest_medication_within_tubing_window(list(bin_obj.get_pending_medications()), current_time)
 
     @staticmethod
     def _get_or_create_bin(
         bin_number: int | str, bins: list[Bin], bins_by_number: dict[int | str, Bin]
     ) -> Bin:
-        """Return a physical bin, creating it if transfer data references a new one."""
         destination_bin = bins_by_number.get(bin_number)
         if destination_bin is None:
-            # This fallback supports incomplete caller-supplied bin lists;
-            # normal data generation pre-creates every configured physical bin.
             destination_bin = Bin(bin_number)
             bins.append(destination_bin)
             bins_by_number[bin_number] = destination_bin
         return destination_bin
 
+    @staticmethod
+    def _find_pending_order_bin(order: MedicationOrder, bins: list[Bin]) -> Bin | None:
+        return next((bin_obj for bin_obj in bins if order in bin_obj.get_pending_medications()), None)
+
     def _sort_by_priority(self, orders: list[MedicationOrder]) -> list[MedicationOrder]:
-        """Sort orders by medication priority, highest first."""
-        # Python's stable sort retains original order when scores are tied.
         return sorted(orders, key=lambda order: self._priority_score(order), reverse=True)
 
     def _priority_score(self, order: MedicationOrder) -> int:
-        """Return the configured status-and-route priority for an order."""
         return get_medication_priority(order.status, order.route)
 
     @staticmethod
     def _get_order_unit(order: MedicationOrder) -> str:
-        """Return the unit stored on the current location or the order itself."""
         if order.location is not None and order.location.unit:
             return order.location.unit
         return order.unit or ""
 
     @staticmethod
     def _priority_payload(order: MedicationOrder) -> dict[str, str]:
-        """Adapt a medication order to the shared priority-rule input shape."""
         return {"status": order.status, "route": order.route}

@@ -10,6 +10,8 @@ This project was inspired by real-world challenges commonly faced in inpatient p
 
 MediTube Optimizer automatically evaluates medication orders, groups medications by tubing bins, and recommends the optimal time to send medications throughout the hospital.
 
+The demo performs evaluation only: it prints the priority-sorted ready-to-tube bins and waits for an explicit tubing request. It does not mark or remove medications automatically.
+
 ---
 
 ## Problem Statement
@@ -138,4 +140,15 @@ pharmacy_tube_optimizer/
 
 ```bash
 python -m pharmacy_tube_optimizer.main
+```
+
+## REST API
+
+The dependency-free WSGI application exposes `GET /bins`, `GET /bins/{bin_id}`, and `POST /bins/{bin_id}/tube`. The POST operation performs a fresh engine-owned transfer reconciliation and evaluation before tubing the selected bin.
+
+```python
+from wsgiref.simple_server import make_server
+from pharmacy_tube_optimizer.api import create_app
+
+make_server("127.0.0.1", 8000, create_app()).serve_forever()
 ```
