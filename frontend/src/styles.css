@@ -10,20 +10,29 @@ button { font: inherit; }
 
 .app-shell { max-width: 1500px; margin: 0 auto; padding: 40px 28px 64px; }
 .page-header { display: flex; justify-content: space-between; gap: 24px; align-items: end; margin-bottom: 28px; }
+.header-actions { display: flex; gap: 10px; align-items: center; }
 h1, h2, p { margin-top: 0; }
 h1 { margin-bottom: 8px; font-size: clamp(2rem, 4vw, 3.25rem); letter-spacing: -0.045em; }
 h2 { margin-bottom: 0; font-size: 1.15rem; }
 .eyebrow { margin-bottom: 6px; color: #3d6b78; font-size: .72rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .subtitle { margin: 0; color: #526d82; }
-.refresh-button, .tube-button { border: 0; border-radius: 9px; font-weight: 800; cursor: pointer; }
+.refresh-button, .demo-button, .demo-time-button, .tube-button { border: 0; border-radius: 9px; font-weight: 800; cursor: pointer; }
 .refresh-button { padding: 11px 15px; background: #102a43; color: #fff; }
+.refresh-button { text-decoration: none; }
+.demo-button { padding: 11px 15px; border: 1px solid #102a43; color: #102a43; text-decoration: none; }
+.demo-time-button { padding: 11px 13px; border: 1px solid #9bb0be; color: #315464; text-decoration: none; }
+.demo-time-button.active { border-color: #102a43; background: #102a43; color: #fff; }
 .refresh-button:disabled { opacity: .65; cursor: wait; }
 
 .transfer-notifications { display: grid; grid-template-columns: 235px 1fr; gap: 24px; margin: 0 0 28px; padding: 20px 24px; border-left: 5px solid #d17a22; border-radius: 10px; background: #fff6e8; }
 .transfer-notifications h2 { font-size: 1rem; }
 .transfer-notifications ul { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.transfer-notifications li { color: #3e4850; }
-.transfer-notifications li p { margin: 3px 0 0; }
+.transfer-notifications li { padding: 11px 14px; border-radius: 8px; background: rgb(255 255 255 / 65%); color: #3e4850; }
+.transfer-notifications li p { margin: 0; }
+.transfer-notifications .transfer-rooms { color: #8a3d00; font-size: .92rem; }
+.transfer-notifications .transfer-move { margin-top: 4px; font-size: .86rem; }
+.transfer-notifications li span { display: block; margin-top: 5px; color: #6e5b47; font-size: .72rem; font-weight: 700; }
+.transfer-notifications .no-transfers { align-self: center; margin: 0; color: #526d82; }
 
 .bin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
 .bin-card { display: flex; flex-direction: column; min-height: 350px; overflow: hidden; border: 1px solid #cddbe4; border-radius: 13px; background: #fff; box-shadow: 0 2px 5px rgb(16 42 67 / 5%); }
@@ -40,8 +49,13 @@ h2 { margin-bottom: 0; font-size: 1.15rem; }
 .medication-list { display: grid; gap: 10px; flex: 1; margin: 0; padding: 14px 19px; list-style: none; }
 .medication-row { padding: 12px; border-radius: 8px; background: #f4f8fa; }
 .medication-row.needs-tubing { border-left: 4px solid #c2410c; }
+.medication-row.has-transfer { border: 1px solid #e5a554; background: #fff8ed; }
+.medication-row.needs-tubing.has-transfer { border-left: 4px solid #c2410c; }
 .medication-heading { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
 .medication-heading strong { font-size: .9rem; }
+.medication-transfer { margin-top: 10px; padding: 8px 9px; border-radius: 6px; background: #ffe8c7; color: #73400e; font-size: .75rem; line-height: 1.45; }
+.medication-transfer p { margin: 0; }
+.medication-transfer p + p { margin-top: 3px; }
 .tube-now-label { display: inline-block; margin-left: 8px; color: #9d3512; font-size: .7rem !important; font-weight: 900; letter-spacing: .08em; }
 .status { padding: 3px 6px; border-radius: 4px; background: #dce9ee; color: #315464; font-size: .67rem; font-weight: 800; }
 .status.stat { background: #ffe0d5; color: #a52c12; }
@@ -62,6 +76,6 @@ dd { margin: 2px 0 0; font-size: .78rem; }
 @media (max-width: 620px) {
   .app-shell { padding: 28px 16px 48px; }
   .page-header, .transfer-notifications { display: block; }
-  .refresh-button { margin-top: 16px; }
+  .header-actions { margin-top: 16px; }
   .transfer-notifications { padding: 18px; }
 }

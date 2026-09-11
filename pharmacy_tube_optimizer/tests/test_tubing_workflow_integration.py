@@ -159,7 +159,7 @@ def test_api_tube_rechecks_transfer_immediately_before_tubing():
     assert cefepime.tubed is True
     assert source.get_pending_medications() == []
     assert destination.get_pending_medications() == []
-    assert payload["detected_transfers"][0]["new_bin"] == "7"
+    assert payload["detected_transfers"] == []
 
 
 def test_cutoff_held_medication_stays_pending_and_its_bin_is_not_ready():
@@ -253,5 +253,5 @@ def test_post_tube_moves_transfers_and_tubes_only_currently_eligible_orders():
     assert held.tubed is False
     assert source.get_pending_medications() == []
     assert destination.get_pending_medications() == [held]
-    assert {transfer["order_number"] for transfer in payload["detected_transfers"]} == {"POST-ELIGIBLE", "POST-HELD"}
+    assert {transfer["order_number"] for transfer in payload["detected_transfers"]} == {"POST-HELD"}
     assert _bin_state(payload, 7)["medication_count"] == 1

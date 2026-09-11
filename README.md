@@ -61,6 +61,17 @@ Special cutoff rules apply:
 **Morning cutoff**
 
 - Medications due at 09:00 or later remain in the bin until 08:30.
+All rules:
+Standard units: 5-hour tubing window.
+ED/ER/PERIOP: 1-hour tubing window.
+Overdue medications: ready to tube.
+Priority: STAT has the highest status priority, followed by route priority (IV, SUBQ/IM, inhaled, PO, topical).
+Bin priority: highest medication priority + 50% of the sum of all medication priorities.
+Transfer: check the patient's current location immediately before tubing and re-evaluate the destination bin.
+Unknown room: goes to UNKNOWN rather than guessing.
+Night cutoff: medications due at 21:00 are held until the 20:30 release threshold.
+Day cutoff: same concept applies to the 09:00 day cutoff, with an 08:30 release threshold.
+Final tubing: only medications that are currently eligible are tubed; the others remain for later.
 
 ---
 
@@ -152,3 +163,8 @@ from pharmacy_tube_optimizer.api import create_app
 
 make_server("127.0.0.1", 8000, create_app()).serve_forever()
 ```
+
+& ".\.venv\Scripts\python.exe" -c "from wsgiref.simple_server import make_server; from pharmacy_tube_optimizer.api import create_app; make_server('127.0.0.1', 8000, create_app()).serve_forever()"
+cd frontend
+npm run dev
+Local:   http://localhost:5173/

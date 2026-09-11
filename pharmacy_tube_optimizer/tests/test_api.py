@@ -56,6 +56,16 @@ def test_get_bins_returns_board_state_and_reconciled_transfer():
     assert orders[0].current_bin == 7
 
 
+def test_get_bins_retains_the_latest_backend_detected_transfer_after_reconciliation():
+    bins, orders = _transferred_order()
+    app = create_app(bins, orders, clock=lambda: NOW)
+
+    _, first_payload = _request(app, "GET", "/bins")
+    _, second_payload = _request(app, "GET", "/bins")
+
+    assert second_payload["detected_transfers"] == first_payload["detected_transfers"]
+
+
 def test_get_one_bin_and_post_tube_return_updated_state():
     bins, orders = _transferred_order()
     app = create_app(bins, orders, clock=lambda: NOW)
@@ -68,6 +78,7 @@ def test_get_one_bin_and_post_tube_return_updated_state():
 
     assert status == "200 OK"
     assert tube_payload["tubed_order_numbers"] == ["ORD001"]
+    assert tube_payload["detected_transfers"] == []
     assert orders[0].tubed is True
     assert tube_payload["tubed_medications"] == [
         {
@@ -179,3 +190,5 @@ def test_simulation_refresh_appends_unique_orders_and_preserves_existing_state()
     assert pending_order.tubed is False
     assert tubed_order.tubed is True
     assert [order["order_number"] for order in payload["tubed_medications"]] == ["EXISTING-TUBED"]
+    assert len(payload["detected_transfers"]) == 1
+    assert payload["detected_transfers"][0]["old_room"] != payload["detected_transfers"][0]["new_room"]

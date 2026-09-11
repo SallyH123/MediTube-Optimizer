@@ -9,9 +9,20 @@ function formatDueTime(value) {
     : date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function MedicationRow({ medication, needsTubing }) {
+function formatBin(bin) {
+  if (!bin) return "UNKNOWN";
+  if (String(bin).startsWith("BIN_")) return bin;
+
+  const binNames = {
+    1: "BIN_CVICU", 2: "BIN_SICU", 3: "BIN_MICU", 4: "BIN_4", 5: "BIN_5",
+    6: "BIN_6", 7: "BIN_7", 8: "BIN_ED", 9: "BIN_PERIOP",
+  };
+  return binNames[bin] ?? `BIN_${bin}`;
+}
+
+function MedicationRow({ medication, needsTubing, transfer }) {
   return (
-    <li className={`medication-row ${needsTubing ? "needs-tubing" : ""}`}>
+    <li className={`medication-row ${needsTubing ? "needs-tubing" : ""} ${transfer ? "has-transfer" : ""}`}>
       <div className="medication-heading">
         <div>
           <strong>{medication.medication_name}</strong>
@@ -19,6 +30,14 @@ function MedicationRow({ medication, needsTubing }) {
         </div>
         <span className={medication.status.toUpperCase() === "STAT" ? "status stat" : "status"}>{medication.status}</span>
       </div>
+      {transfer && (
+        <div className="medication-transfer" role="status">
+          {(transfer.old_room || transfer.new_room) && (
+            <p><strong>Patient transferred:</strong> Room {transfer.old_room ?? "Unknown"} &rarr; Room {transfer.new_room ?? "Unknown"}</p>
+          )}
+          <p><strong>Move {medication.medication_name}:</strong> {formatBin(transfer.old_bin)} &rarr; {formatBin(transfer.new_bin)}</p>
+        </div>
+      )}
       <dl>
         <div><dt>Order</dt><dd>{medication.order_number}</dd></div>
         <div><dt>Due</dt><dd>{formatDueTime(medication.due_time)}</dd></div>
@@ -30,10 +49,13 @@ function MedicationRow({ medication, needsTubing }) {
   );
 }
 
-function BinCard({ bin, tubingBin, onTube, priorityStrength, boardBusy }) {
+function BinCard({ bin, tubingBin, onTube, priorityStrength, boardBusy, transfersByOrder }) {
   const ready = bin.ready_to_tube;
   const isTubing = tubingBin === bin.bin_number;
   const queuePriority = bin.queue_priority_score ?? bin.priority_score;
+  const medicationsByTubingStatus = [...bin.medications].sort(
+    (left, right) => Number(right.ready_to_tube) - Number(left.ready_to_tube),
+  );
 
   return (
     <article
@@ -57,11 +79,12 @@ function BinCard({ bin, tubingBin, onTube, priorityStrength, boardBusy }) {
 
       {bin.medications.length ? (
         <ul className="medication-list">
-          {bin.medications.map((medication) => (
+          {medicationsByTubingStatus.map((medication) => (
             <MedicationRow
               key={medication.order_number}
               medication={medication}
               needsTubing={medication.ready_to_tube}
+              transfer={transfersByOrder.get(medication.order_number)}
             />
           ))}
         </ul>
@@ -81,22 +104,23 @@ function BinCard({ bin, tubingBin, onTube, priorityStrength, boardBusy }) {
 }
 
 function TransferNotifications({ transfers }) {
-  if (!transfers.length) return null;
-
   return (
     <section className="transfer-notifications" aria-live="polite">
       <div>
         <p className="eyebrow">Transfer check</p>
-        <h2>Medication transfers detected</h2>
+        <h2>{transfers.length ? "Medication transfers detected" : "Patient transfer status"}</h2>
       </div>
-      <ul>
-        {transfers.map((transfer) => (
-          <li key={`${transfer.order_number}-${transfer.old_room}-${transfer.new_room}`}>
-            <strong>{transfer.medication_name}</strong> <span>· Order {transfer.order_number}</span>
-            <p>Room {transfer.old_room} → Room {transfer.new_room} · Bin {transfer.old_bin} → Bin {transfer.new_bin ?? "UNKNOWN"}</p>
-          </li>
-        ))}
-      </ul>
+      {transfers.length ? (
+        <ul>
+          {transfers.map((transfer) => (
+            <li key={`${transfer.order_number}-${transfer.old_room}-${transfer.new_room}`}>
+              <p className="transfer-rooms"><strong>Patient transferred:</strong> Room {transfer.old_room ?? "Unknown"} &rarr; Room {transfer.new_room ?? "Unknown"}</p>
+              <p className="transfer-move"><strong>Move {transfer.medication_name}:</strong> {formatBin(transfer.old_bin)} &rarr; {formatBin(transfer.new_bin)}</p>
+              <span>Order {transfer.order_number}</span>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="no-transfers">No patient transfers detected in the current queue.</p>}
     </section>
   );
 }
@@ -133,6 +157,8 @@ function TubedMedications({ medications }) {
 }
 
 export default function App() {
+  const isDemo = window.location.pathname.startsWith("/cutoff-demo");
+  const demoTime = new URLSearchParams(window.location.search).get("time") === "2030" ? "2030" : "2000";
   const [board, setBoard] = useState(null);
   const [transfers, setTransfers] = useState([]);
   const [error, setError] = useState("");
@@ -197,18 +223,32 @@ export default function App() {
   const getPriorityStrength = (bin) => (
     bin.ready_to_tube ? Math.max(0, bin.priority_score / highestReadyPriority) : 0
   );
+  const transfersByOrder = new Map(transfers.map((transfer) => [transfer.order_number, transfer]));
 
   return (
     <main className="app-shell">
       <header className="page-header">
         <div>
-          <p className="eyebrow">Pharmacy operations</p>
-          <h1>MediTube Tubing Board</h1>
-          <p className="subtitle">Live queue state from the tubing backend.</p>
+          <p className="eyebrow">{isDemo ? `Demo scenario · simulated time ${demoTime === "2030" ? "20:30" : "20:00"}` : "Pharmacy operations"}</p>
+          <h1>{isDemo ? "MediTube Demo Board" : "MediTube Tubing Board"}</h1>
+          <p className="subtitle">{isDemo ? "Ten fixed medication cases for cutoff and transfer review." : "Live queue state from the tubing backend."}</p>
         </div>
-        <button type="button" className="refresh-button" onClick={handleRefreshSimulation} disabled={loading || refreshing || tubingBin !== null}>
-          {refreshing ? "Generating…" : "Refresh board"}
-        </button>
+        <div className="header-actions">
+          {isDemo ? (
+            <>
+              <a className={demoTime === "2000" ? "demo-time-button active" : "demo-time-button"} href="/cutoff-demo?time=2000">8:00 PM</a>
+              <a className={demoTime === "2030" ? "demo-time-button active" : "demo-time-button"} href="/cutoff-demo?time=2030">8:30 PM</a>
+              <a className="refresh-button" href="/">Back to live board</a>
+            </>
+          ) : (
+            <>
+              <a className="demo-button" href="/cutoff-demo">Open demo</a>
+              <button type="button" className="refresh-button" onClick={handleRefreshSimulation} disabled={loading || refreshing || tubingBin !== null}>
+                {refreshing ? "Generating…" : "Refresh board"}
+              </button>
+            </>
+          )}
+        </div>
       </header>
 
       {error && <p className="error-message" role="alert">{error}</p>}
@@ -225,6 +265,7 @@ export default function App() {
                 onTube={handleTube}
                 priorityStrength={getPriorityStrength(bin)}
                 boardBusy={refreshing}
+                transfersByOrder={transfersByOrder}
               />
             ))}
           </section>
@@ -236,6 +277,7 @@ export default function App() {
               onTube={handleTube}
               priorityStrength={getPriorityStrength(board.unknown_bin)}
               boardBusy={refreshing}
+              transfersByOrder={transfersByOrder}
             />
           </section>
           <TubedMedications medications={board.tubed_medications || []} />

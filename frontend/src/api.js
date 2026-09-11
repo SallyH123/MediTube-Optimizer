@@ -1,7 +1,9 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+const API_PATH_PREFIX = window.location.pathname.startsWith("/cutoff-demo") ? "/demo" : "";
+const API_QUERY = API_PATH_PREFIX ? window.location.search : "";
 
 async function request(path, options) {
-  const response = await fetch(`${API_BASE_URL}${path}`, options);
+  const response = await fetch(`${API_BASE_URL}${API_PATH_PREFIX}${path}${API_QUERY}`, options);
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
