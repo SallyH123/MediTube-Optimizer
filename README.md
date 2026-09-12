@@ -1,170 +1,157 @@
-## MediTube Optimizer
-
-**An Intelligent Medication Tubing and Workflow Optimization System for Hospital Pharmacies**
+# MediTube Optimizer
 
 ## Overview
 
-MediTube Optimizer is a backend application designed to optimize medication tubing workflows in hospital pharmacies. The goal is to reduce unnecessary pneumatic tube deliveries, minimize medication delivery errors caused by patient transfers, and improve technician efficiency while ensuring that medications arrive on time.
+MediTube Optimizer is an intelligent medication-tubing and workflow optimization system for hospital pharmacies. It helps technicians decide **what to tube, when to tube it, and where it should go** by combining medication timing, priority, cutoff, bin, and patient-transfer information.
 
-This project was inspired by real-world challenges commonly faced in inpatient pharmacies, where technicians must constantly decide whether medications should be tubed immediately or temporarily held based on due times, patient locations, and medication priority.
-
-MediTube Optimizer automatically evaluates medication orders, groups medications by tubing bins, and recommends the optimal time to send medications throughout the hospital.
-
-The demo performs evaluation only: it prints the priority-sorted ready-to-tube bins and waits for an explicit tubing request. It does not mark or remove medications automatically.
-
----
+The project pairs a Python backend rules engine with a React tubing board. All clinical, timing, and transfer decisions are evaluated by the backend; the frontend presents that evaluated board state for the technician.
 
 ## Problem Statement
 
-Hospital pharmacies process hundreds of medication orders every day. Technicians frequently face several challenges:
+Hospital pharmacies process many medication orders with different due times, routes, priorities, and patient locations. Technicians must decide which orders can travel together, avoid sending routine doses too early, prioritize urgent medications, and account for patients who move after a medication is prepared.
 
-- Multiple medications are due at different times for patients in the same unit.
-- Patients may transfer to another room before a medication is delivered.
-- Routine medications scheduled far in advance are often sent too early.
-- STAT medications require immediate delivery.
-- Emergency departments and perioperative areas have different turnaround expectations.
-- Technicians must manually determine which medications should be tubed together.
-
-Incorrect tubing decisions can result in:
-
-- Delayed medication administration
-- Medications sent to the wrong location
-- Increased technician workload
-- Additional phone calls and manual corrections
-
-MediTube Optimizer aims to automate these decisions using configurable business rules.
-
----
+Incorrect tubing decisions can delay administration, send medication to the wrong location, increase manual follow-up, and create unnecessary delivery work. MediTube Optimizer centralizes these checks into a clear, transfer-aware tubing workflow.
 
 ## Key Features
 
-### Medication Prioritization
+MediTube provides:
 
-When multiple bins need to be sent at the same time, PharmaFlow prioritizes medications in the following order:
+- grouping pending orders by physical tubing bin;
+- identifying medications that are ready to tube now;
+- ranking ready bins by medication priority;
+- reconciling patient transfers before tubing;
+- keeping unknown destinations in a separate handling queue; and
+- preserving a backend-confirmed tubing history.
 
-1. STAT medications
-2. IV medications
-3. Oral medications
+### Transfer-aware tubing
 
----
+Before tubing, the backend compares the patient's previous and current room, determines the destination bin, and reconciles the medication location. The board displays the backend-generated transfer notification until that transferred order is successfully tubed.
 
-### Intelligent Hold Rules
+### Priority and timing guidance
 
-Routine medications are generally held until they fall within the tubing window.
+The backend identifies medications that are ready to tube now, ranks bins by priority, and keeps non-ready medications visible for later review. Within each bin, the interface places `TUBE NOW` medications first for faster scanning.
 
-Special cutoff rules apply:
+### Technician control
 
-**Night cutoff**
+Evaluation never tubes medication automatically. A technician must explicitly select **TUBE**, or use a manual override when appropriate.
 
-- Medications due at 21:00 or later remain in the bin until 20:30.
+## Core workflow
 
-**Morning cutoff**
+1. The backend evaluates all pending medication orders.
+2. Bins enter review when their closest dose is due within one hour.
+3. Within a reviewed bin, each medication must satisfy its cutoff and unit-specific tubing window.
+4. Before tubing, the backend checks for a patient transfer and moves the medication to the correct destination bin.
+5. A technician selects **TUBE** or uses the manual override. Only an explicit action changes medication state.
 
-- Medications due at 09:00 or later remain in the bin until 08:30.
-All rules:
-Standard units: 5-hour tubing window.
-ED/ER/PERIOP: 1-hour tubing window.
-Overdue medications: ready to tube.
-Priority: STAT has the highest status priority, followed by route priority (IV, SUBQ/IM, inhaled, PO, topical).
-Bin priority: highest medication priority + 50% of the sum of all medication priorities.
-Transfer: check the patient's current location immediately before tubing and re-evaluate the destination bin.
-Unknown room: goes to UNKNOWN rather than guessing.
-Night cutoff: medications due at 21:00 are held until the 20:30 release threshold.
-Day cutoff: same concept applies to the 09:00 day cutoff, with an 08:30 release threshold.
-Final tubing: only medications that are currently eligible are tubed; the others remain for later.
+## Rules at a glance
 
----
+1. **Bin review gate**
 
-### Unit-Specific Rules
+   The engine first checks the earliest scheduled medication in each bin. A bin enters review only when that closest dose is due within one hour. This avoids repeatedly evaluating bins whose medications are still far from due.
 
-#### Emergency Department (ED) and Perioperative Units
+2. **Cutoff release times**
 
-- Tube medications only if due within one hour.
+   - Medications due from **21:00 through 08:59** are part of the night batch and release at **20:30** on the preceding evening.
+   - Medications due from **09:00 through 20:59** are part of the day batch and release at **08:30** on their due date.
 
-#### Other Units (ICU, floor units)
+   Passing the time window alone is not enough: the medication must also have passed its applicable cutoff release time.
 
-- Standard tubing rules apply.
+3. **Unit-specific tubing windows**
 
-Supported units:
+   After the bin is under review and the cutoff is released, each medication is evaluated individually.
 
-- ED
-- PERIOP
-- CVICU
-- SICU
-- MICU
-- Unit 3
-- Unit 4
-- Unit 5
-- Unit 6
+   - Standard units, including ICU and floor bins, use a **five-hour** tubing window.
+   - ED and PERIOP use a **one-hour** tubing window.
+   - Overdue medications remain eligible for review and tubing.
 
----
+4. **Medication priority score**
 
-### Patient Transfer Detection
+   A medication score is the sum of its status score and route score. `STAT` adds **100** points; `Routine` adds **0**. Route scores are: IV **30**, SUBQ/IM **20**, PO/Inhaler **10**, and topical **5**. For example, a STAT IV medication scores **130** (`100 + 30`), while a routine IV medication scores **30**.
 
-Before tubing medications, PharmaFlow checks whether the patient has transferred to another location.
+5. **Bin priority score**
 
-Example:
+   Ready bins are ranked by `highest medication score + 50% of the sum of all medication scores in the bin`. This gives urgent medications the strongest influence while still rewarding bins that efficiently group several eligible medications.
 
-- Original room: 8012
-- Patient transferred to: 7015
+6. **Patient transfers and unknown destinations**
 
-PharmaFlow automatically moves the medication from Bin 8 to Bin 7 before tubing.
+   Immediately before tubing, the backend compares the previous and current patient room. If the patient moved, the engine determines the new destination bin and reconciles the medication before tubing. If the room cannot be mapped safely, the order remains in the separate `UNKNOWN` queue.
 
----
+7. **Explicit tubing and override**
 
-### Manual Override
+   Evaluation does not tube medication automatically. A technician must select **TUBE** to send currently eligible medications, or use a manual override when operationally appropriate.
 
-Technicians can manually override the system and send any bin immediately.
+## Demo board
 
----
+The demo contains fixed cases for cutoff, transfer, route, priority, and unknown-destination review.
 
-### Real-Time Tubing Dashboard (Future Development)
+- `http://localhost:5173/cutoff-demo?time=2000` — 8:00 PM scenario
+- `http://localhost:5173/cutoff-demo?time=2030` — 8:30 PM scenario
 
-Future versions will include a visual dashboard showing:
+The transfer notification is generated by the backend. It remains visible after reconciliation so repeated board reads do not hide it, and it is removed once the transferred order is successfully tubed.
 
-- Current bins waiting to be tubed
-- Medication priorities
-- Patient room assignments
-- Overdue medications
-- Tubing recommendations
-- One-click "Tube Now" actions.
+## Run locally
 
----
+### 1. Start the backend
 
-## Project Structure
+Create and activate a virtual environment, then install the project requirements:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Run the API server:
+
+```powershell
+.\.venv\Scripts\python.exe -c "from wsgiref.simple_server import make_server; from pharmacy_tube_optimizer.api import create_app; make_server('127.0.0.1', 8000, create_app()).serve_forever()"
+```
+
+The API is then available at `http://127.0.0.1:8000`.
+
+### 2. Start the frontend
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open the local URL printed by Vite, normally `http://localhost:5173`.
+
+If the frontend is served separately from the backend, set `VITE_API_BASE_URL` to the backend origin before starting Vite.
+
+## API endpoints
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/bins` | Return the complete evaluated board. |
+| `GET` | `/bins/{bin_id}` | Return one bin and active transfer notifications. |
+| `POST` | `/bins/{bin_id}/tube` | Re-check transfers and tube eligible orders in a bin. |
+| `POST` | `/bins/{bin_id}/force-tube` | Apply a technician-approved tubing override. |
+| `POST` | `/simulation/refresh` | Add a generated medication batch to the live simulation. |
+| `GET` | `/demo/bins?time=2000` | Return the fixed 8:00 PM demo board. |
+| `GET` | `/demo/bins?time=2030` | Return the fixed 8:30 PM demo board. |
+
+## Project layout
 
 ```text
 pharmacy_tube_optimizer/
-├── config.py
-├── main.py
-├── models/
-├── rules/
-├── services/
-├── data/
-├── utils/
-└── tests/
+├── api/        # WSGI routes and response composition
+├── data/       # Demo data, generated data, and transfer fixtures
+├── models/     # Medication, patient-location, and bin domain models
+├── rules/      # Pure timing, priority, cutoff, and transfer rules
+├── services/   # Evaluation, state, tubing, and override workflows
+└── tests/      # Unit and integration coverage
+
+frontend/
+└── src/        # React tubing-board interface
 ```
 
----
+## Tests
 
-## Run the Demo
+Run the backend test suite from the repository root:
 
-```bash
-python -m pharmacy_tube_optimizer.main
+```powershell
+.\.venv\Scripts\python.exe -m pytest pharmacy_tube_optimizer\tests -q
 ```
-
-## REST API
-
-The dependency-free WSGI application exposes `GET /bins`, `GET /bins/{bin_id}`, and `POST /bins/{bin_id}/tube`. The POST operation performs a fresh engine-owned transfer reconciliation and evaluation before tubing the selected bin.
-
-```python
-from wsgiref.simple_server import make_server
-from pharmacy_tube_optimizer.api import create_app
-
-make_server("127.0.0.1", 8000, create_app()).serve_forever()
-```
-
-& ".\.venv\Scripts\python.exe" -c "from wsgiref.simple_server import make_server; from pharmacy_tube_optimizer.api import create_app; make_server('127.0.0.1', 8000, create_app()).serve_forever()"
-cd frontend
-npm run dev
-Local:   http://localhost:5173/

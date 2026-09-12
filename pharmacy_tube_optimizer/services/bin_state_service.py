@@ -40,6 +40,7 @@ class BinStateService:
         return self._bin_state(bin_obj, evaluation)
 
     def _bin_state(self, bin_obj: Bin, evaluation: TubingEvaluation) -> dict:
+        """Serialize one physical bin with evaluation-derived readiness data."""
         orders = bin_obj.get_pending_medications()
         ready_order_ids = {
             order.order_id
@@ -67,6 +68,7 @@ class BinStateService:
     def _medication_state(
         order: MedicationOrder, evaluation: TubingEvaluation, ready_order_ids: set[str]
     ) -> dict:
+        """Serialize one medication for safe frontend consumption."""
         return {
             "order_number": order.order_number,
             "medication_name": order.medication_name,
@@ -81,6 +83,7 @@ class BinStateService:
 
     @staticmethod
     def _normalize_bin_id(bin_id: int | str) -> int | str:
+        """Normalize a display bin identifier to its domain value."""
         value = str(bin_id).strip().upper()
         if value.startswith("BIN_"):
             value = value[4:]
@@ -88,4 +91,5 @@ class BinStateService:
 
     @staticmethod
     def _bin_name(bin_number: int | str) -> str:
+        """Return the frontend-friendly name for a bin number."""
         return "Unknown destination" if bin_number == UNKNOWN_BIN else f"Bin {bin_number}"

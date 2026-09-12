@@ -249,6 +249,7 @@ class TubingEngine:
         return self.is_within_tubing_window(order, current_time)
 
     def is_within_tubing_window(self, order: MedicationOrder, current_time: datetime) -> bool:
+        """Return whether an order meets its unit-specific timing window."""
         if order.due_time is None:
             return True
         unit = self._get_order_unit(order)
@@ -259,16 +260,19 @@ class TubingEngine:
         return self._sort_by_priority(list(bin_obj.get_pending_medications()))
 
     def _eligible_orders(self, orders: list[MedicationOrder], current_time: datetime) -> list[MedicationOrder]:
+        """Filter a projected queue to tube-eligible orders and rank them."""
         return self._sort_by_priority([order for order in orders if self.should_tube_medication(order, current_time)])
 
     @staticmethod
     def _is_bin_ready_for_review(bin_obj: Bin, current_time: datetime) -> bool:
+        """Return whether the bin's closest due medication opens review."""
         return is_closest_medication_within_tubing_window(list(bin_obj.get_pending_medications()), current_time)
 
     @staticmethod
     def _get_or_create_bin(
         bin_number: int | str, bins: list[Bin], bins_by_number: dict[int | str, Bin]
     ) -> Bin:
+        """Return a destination bin, creating it when the destination is new."""
         destination_bin = bins_by_number.get(bin_number)
         if destination_bin is None:
             destination_bin = Bin(bin_number)
@@ -278,20 +282,25 @@ class TubingEngine:
 
     @staticmethod
     def _find_pending_order_bin(order: MedicationOrder, bins: list[Bin]) -> Bin | None:
+        """Find the physical bin that currently contains a pending order."""
         return next((bin_obj for bin_obj in bins if order in bin_obj.get_pending_medications()), None)
 
     def _sort_by_priority(self, orders: list[MedicationOrder]) -> list[MedicationOrder]:
+        """Return orders in descending medication-priority order."""
         return sorted(orders, key=lambda order: self._priority_score(order), reverse=True)
 
     def _priority_score(self, order: MedicationOrder) -> int:
+        """Calculate the existing priority-rule score for one order."""
         return get_medication_priority(order.status, order.route)
 
     @staticmethod
     def _get_order_unit(order: MedicationOrder) -> str:
+        """Resolve the unit used for timing-window evaluation."""
         if order.location is not None and order.location.unit:
             return order.location.unit
         return order.unit or ""
 
     @staticmethod
     def _priority_payload(order: MedicationOrder) -> dict[str, str]:
+        """Build the minimal rule input used for bin-priority scoring."""
         return {"status": order.status, "route": order.route}

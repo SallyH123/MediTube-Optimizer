@@ -37,6 +37,7 @@ class MediTubeApi:
         clock: Callable[[], datetime] | None = None,
         demo_mode: bool = False,
     ) -> None:
+        """Initialize the API with stateful services and optional demo boards."""
         self.bins = bins
         self.engine = engine or TubingEngine()
         self.state_service = state_service or BinStateService()
@@ -61,6 +62,7 @@ class MediTubeApi:
                 )
 
     def __call__(self, environ: dict, start_response: Callable):
+        """Route a WSGI request to the appropriate board operation."""
         method = environ.get("REQUEST_METHOD", "GET").upper()
         path = environ.get("PATH_INFO", "/").rstrip("/") or "/"
         if path == "/demo" or path.startswith("/demo/"):
@@ -87,6 +89,7 @@ class MediTubeApi:
         return self._respond(start_response, "404 Not Found", {"error": "Route not found"})
 
     def _board_state(self) -> dict:
+        """Prepare and serialize the current transfer-aware tubing board."""
         # The engine owns transfer detection and reconciliation; this API only
         # requests the prepared state and serializes it.
         evaluation = self.engine.prepare_tubing(self.bins, self.clock())
@@ -103,6 +106,7 @@ class MediTubeApi:
         return state
 
     def _respond_for_bin(self, start_response: Callable, raw_bin_id: str):
+        """Return one requested bin together with active transfer notifications."""
         state = self._board_state()
         normalized = self._normalize_bin_id(raw_bin_id)
         bin_state = self.state_service.get_bin_state(normalized, self.bins, self.engine.evaluate(self.bins, self.clock()))
@@ -115,6 +119,7 @@ class MediTubeApi:
         )
 
     def _tube_bin(self, start_response: Callable, raw_bin_id: str):
+        """Tube eligible medications in one bin after a final transfer check."""
         bin_id = self._normalize_bin_id(raw_bin_id)
         if bin_id not in TUBING_BIN_LOCATIONS:
             return self._respond(start_response, "404 Not Found", {"error": "Bin not found"})
@@ -195,6 +200,7 @@ class MediTubeApi:
 
     @staticmethod
     def _normalize_bin_id(raw_bin_id: str) -> int | str:
+        """Convert a URL bin identifier into the domain's bin-number format."""
         value = raw_bin_id.strip().upper()
         if value.startswith("BIN_"):
             value = value[4:]
@@ -202,6 +208,7 @@ class MediTubeApi:
 
     @staticmethod
     def _respond(start_response: Callable, status: str, payload: dict):
+        """Serialize a JSON response using the WSGI response contract."""
         encoded = json.dumps(payload).encode("utf-8")
         start_response(status, [("Content-Type", "application/json"), ("Content-Length", str(len(encoded)))])
         return [encoded]
